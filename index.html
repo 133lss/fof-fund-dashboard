@@ -39,7 +39,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 .controls .quick-btns button { background: #1a237e; padding: 6px 14px; font-size: 13px; }
 .controls .quick-btns button:hover { background: #283593; }
 .range-info { font-size: 13px; color: #7986cb; margin-left: auto; }
-.summary-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; padding: 20px 32px; }
+.summary-cards { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; padding: 20px 32px; }
 .card { background: linear-gradient(135deg, #1a237e 0%, #283593 100%); border-radius: 12px; padding: 20px; border: 1px solid #3949ab; }
 .card .label { font-size: 13px; color: #9fa8da; margin-bottom: 8px; }
 .card .value { font-size: 24px; font-weight: 700; color: #fff; }
@@ -57,7 +57,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 .toast.success { background: #2e7d32; color: #fff; }
 .toast.error { background: #c62828; color: #fff; }
 .toast.show { opacity: 1; }
-@media (max-width: 1200px) { .summary-cards { grid-template-columns: repeat(3, 1fr); } .charts { grid-template-columns: 1fr; } }
+@media (max-width: 1400px) { .summary-cards { grid-template-columns: repeat(4, 1fr); } .charts { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -103,7 +103,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 <div class="summary-cards" id="summaryCards"></div>
 <div class="charts">
   <div class="chart-box full">
-    <div class="chart-title">母基金累计收益率（费前 vs 费后）</div>
+    <div class="chart-title">母基金收益率（TWR时间加权 vs 简单收益率）</div>
     <div class="chart-container tall" id="chart1"></div>
   </div>
   <div class="chart-box full">
@@ -208,6 +208,81 @@ function calcMotherFund(products) {
     });
   }
   return results;
+}
+
+// ===== TWR时间加权收益率 =====
+function calcTWR(mfData, dates) {
+  if (!mfData.invested || mfData.invested.length < 2) return new Array(dates.length).fill(0);
+  let twr = [];
+  let cumTWR = 1;
+  let prevInv = mfData.invested[0];
+  let prevNV = mfData.net_value[0];
+  for (let i = 0; i < dates.length; i++) {
+    if (i === 0) { twr.push(0); continue; }
+    let currInv = mfData.invested[i];
+    let currNV = mfData.net_value[i];
+    let cf = currInv - prevInv;
+    let subR;
+    if (prevNV > 0) {
+      if (cf !== 0) { subR = (currNV - cf) / prevNV - 1; }
+      else { subR = currNV / prevNV - 1; }
+    } else { subR = 0; }
+    cumTWR *= (1 + subR);
+    twr.push(parseFloat(((cumTWR - 1) * 100).toFixed(2)));
+    prevInv = currInv; prevNV = currNV;
+  }
+  return twr;
+}
+
+// ===== XIRR年化内部收益率 =====
+function calcXIRR(products, mfData) {
+  let cfs = [];
+  products.forEach(p => { cfs.push({ date: p.purchase_date, amount: -p.amount }); });
+  let lastIdx = mfData.net_value.length - 1;
+  let datesArr = fullData ? fullData.allDates : [];
+  if (datesArr.length === 0) return 0;
+  let lastDate = datesArr[datesArr.length - 1];
+  let lastVal = mfData.net_value[lastIdx];
+  cfs.push({ date: lastDate, amount: lastVal });
+  cfs.sort((a, b) => a.date < b.date ? -1 : 1);
+  let base = new Date(cfs[0].date);
+  function xnpv(r) {
+    let npv = 0;
+    for (let cf of cfs) {
+      let yrs = (new Date(cf.date) - base) / (365.25 * 86400000);
+      npv += cf.amount / Math.pow(1 + r, yrs);
+    }
+    return npv;
+  }
+  function xnpvD(r) {
+    let d = 0;
+    for (let cf of cfs) {
+      let yrs = (new Date(cf.date) - base) / (365.25 * 86400000);
+      d += -yrs * cf.amount / Math.pow(1 + r, yrs + 1);
+    }
+    return d;
+  }
+  let rate = 0.1;
+  for (let iter = 0; iter < 100; iter++) {
+    let npv = xnpv(rate);
+    let deriv = xnpvD(rate);
+    if (Math.abs(npv) < 1e-7) break;
+    if (Math.abs(deriv) < 1e-15) break;
+    let nr = rate - npv / deriv;
+    if (Math.abs(nr - rate) < 1e-9) { rate = nr; break; }
+    rate = nr;
+    if (rate < -0.999) rate = -0.998;
+  }
+  return rate;
+}
+
+// ===== MOIC投资倍数 =====
+function calcMOIC(mfData) {
+  let li = mfData.net_value.length - 1;
+  if (li < 0) return 0;
+  let inv = mfData.invested[li];
+  let nv = mfData.net_value[li];
+  return inv > 0 ? nv / inv : 0;
 }
 
 // ===== Excel解析 =====
@@ -489,6 +564,9 @@ function renderAll() {
   let prodsDecoded = decodeProducts(selectedProds, workData.dates);
   let mfData = decodeMF(workData.mother_fund);
   fullData = { allDates: workData.dates, prods: prodsDecoded, mfData: mfData };
+  fullData.twr = calcTWR(mfData, workData.dates);
+  fullData.xirr = calcXIRR(selectedProds, mfData);
+  fullData.moic = calcMOIC(mfData);
   
   // Set date inputs
   const sd = document.getElementById('startDate');
@@ -512,12 +590,18 @@ function render(dates, prods, mfData, isRangeView) {
   const profit = nv - inv;
   const retNet = inv > 0 ? ((nv / inv - 1) * 100).toFixed(2) : '0.00';
   const retGross = inv > 0 ? ((gv / inv - 1) * 100).toFixed(2) : '0.00';
+  const twr = calcTWR(mfData, dates);
+  const twrVal = twr.length > 0 ? twr[twr.length - 1] : 0;
+  const xirrVal = fullData.xirr || 0;
+  const moicVal = fullData.moic || 0;
 
   document.getElementById('summaryCards').innerHTML = `
     <div class="card"><div class="label">累计投入</div><div class="value">${(inv/10000).toFixed(1)}万</div></div>
-    <div class="card"><div class="label">费后总市值</div><div class="value green">${(nv/10000).toFixed(2)}万</div><div class="sub">费前总市值 ${(gv/10000).toFixed(2)}万</div></div>
-    <div class="card"><div class="label">${isRangeView?'区间':'费后累计'}收益</div><div class="value ${parseFloat(retNet)>=0?'green':'red'}">${retNet}%</div><div class="sub">费前 ${retGross}%</div></div>
-    <div class="card"><div class="label">${isRangeView?'区间盈亏':'净赚金额'}</div><div class="value ${profit>=0?'green':'red'}">${(profit/10000).toFixed(2)}万</div></div>
+    <div class="card"><div class="label">费后总市值</div><div class="value green">${(nv/10000).toFixed(2)}万</div><div class="sub">费前 ${(gv/10000).toFixed(2)}万</div></div>
+    <div class="card"><div class="label">TWR时间加权</div><div class="value ${twrVal>=0?'green':'red'}">${twrVal.toFixed(2)}%</div><div class="sub">净赚${(profit/10000).toFixed(1)}万 · 消除资金进出</div></div>
+    <div class="card"><div class="label">XIRR年化</div><div class="value ${xirrVal*100>=0?'green':'red'}">${(xirrVal*100).toFixed(2)}%</div><div class="sub">内部收益率</div></div>
+    <div class="card"><div class="label">MOIC投资倍数</div><div class="value ${moicVal>=1?'green':'red'}">${moicVal.toFixed(3)}x</div><div class="sub">市值/投入</div></div>
+    <div class="card"><div class="label">${isRangeView?'区间简单收益率':'简单收益率'}</div><div class="value ${parseFloat(retNet)>=0?'green':'red'}">${retNet}%</div><div class="sub">未调整资金时点 · 费前${retGross}%</div></div>
     <div class="card"><div class="label">累计预扣业绩报酬</div><div class="value">${(fee/10000).toFixed(2)}万</div></div>
   `;
 
@@ -531,15 +615,16 @@ function render(dates, prods, mfData, isRangeView) {
   // Chart 1
   charts.c1 = initChart('chart1', {
     tooltip: ttS,
-    legend: { data: ['费后收益率', '费前收益率'], textStyle: { color: '#9fa8da' }, top: 0 },
+    legend: { data: ['TWR时间加权', '简单收益率', '费前收益率'], textStyle: { color: '#9fa8da' }, top: 0 },
     grid: { left: 60, right: 30, top: 40, bottom: 50 },
     xAxis: xConf,
     yAxis: { type: 'value', name: '收益率(%)', nameTextStyle: { color: '#9fa8da' }, ...axS },
     dataZoom: [{ type: 'inside' }, dzS],
     series: [
-      { name: '费后收益率', type: 'line', data: mfData.return_net, smooth: true, lineStyle: { width: 3 }, itemStyle: { color: '#4caf50' },
+      { name: 'TWR时间加权', type: 'line', data: twr, smooth: true, lineStyle: { width: 3 }, itemStyle: { color: '#4caf50' },
         areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'rgba(76,175,80,0.3)'},{offset:1,color:'rgba(76,175,80,0)'}]) } },
-      { name: '费前收益率', type: 'line', data: mfData.return_gross, smooth: true, lineStyle: { width: 2, type: 'dashed' }, itemStyle: { color: '#81c784' } }
+      { name: '简单收益率', type: 'line', data: mfData.return_net, smooth: true, lineStyle: { width: 2, type: 'dashed' }, itemStyle: { color: '#81c784' } },
+      { name: '费前收益率', type: 'line', data: mfData.return_gross, smooth: true, lineStyle: { width: 1.5, type: 'dashed', opacity: 0.5 }, itemStyle: { color: '#a5d6a7' } }
     ]
   });
 
