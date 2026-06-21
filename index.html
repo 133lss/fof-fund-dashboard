@@ -57,6 +57,27 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 .toast.success { background: #2e7d32; color: #fff; }
 .toast.error { background: #c62828; color: #fff; }
 .toast.show { opacity: 1; }
+.info-panel { margin: 0 32px 16px; background: #0d1230; border: 1px solid #1a237e; border-radius: 12px; overflow: hidden; }
+.info-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; cursor: pointer; user-select: none; }
+.info-panel-header:hover { background: #111640; }
+.info-panel-header .title { font-size: 14px; font-weight: 600; color: #c5cae9; display: flex; align-items: center; gap: 8px; }
+.info-panel-header .toggle { font-size: 12px; color: #7986cb; transition: transform 0.2s; }
+.info-panel-header .toggle.open { transform: rotate(180deg); }
+.info-panel-body { padding: 0 20px 16px; display: none; }
+.info-panel-body.open { display: block; }
+.metric-card { background: #111640; border-radius: 10px; padding: 16px; margin-bottom: 12px; border-left: 4px solid #5c6bc0; }
+.metric-card.twr { border-left-color: #4caf50; }
+.metric-card.xirr { border-left-color: #42a5f5; }
+.metric-card.moic { border-left-color: #ffa726; }
+.metric-card .m-title { font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.metric-card .m-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 400; }
+.metric-card.twr .m-tag { background: rgba(76,175,80,0.2); color: #4caf50; }
+.metric-card.xirr .m-tag { background: rgba(66,165,245,0.2); color: #42a5f5; }
+.metric-card.moic .m-tag { background: rgba(255,167,38,0.2); color: #ffa726; }
+.metric-card .m-desc { font-size: 13px; color: #b0bec5; line-height: 1.7; }
+.metric-card .m-desc strong { color: #e8eaf6; }
+.metric-card .m-formula { font-family: 'Courier New', monospace; font-size: 12px; color: #80deea; background: #0a0e27; padding: 8px 12px; border-radius: 6px; margin: 8px 0; display: inline-block; }
+.metric-card .m-note { font-size: 12px; color: #7986cb; margin-top: 6px; font-style: italic; }
 @media (max-width: 1400px) { .summary-cards { grid-template-columns: repeat(4, 1fr); } .charts { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -101,6 +122,75 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 </div>
 
 <div class="summary-cards" id="summaryCards"></div>
+
+<div class="info-panel">
+  <div class="info-panel-header" onclick="toggleInfoPanel()">
+    <span class="title">📖 收益率指标说明（TWR / XIRR / MOIC）— 点击展开</span>
+    <span class="toggle" id="infoToggle">▼</span>
+  </div>
+  <div class="info-panel-body" id="infoBody">
+    <div class="metric-card twr">
+      <div class="m-title">TWR 时间加权收益率 <span class="m-tag">图表1主线</span></div>
+      <div class="m-desc">
+        <strong>定义：</strong>Time-Weighted Return，在每个资金进出时点切断，分段计算子区间收益率后几何连乘。<br>
+        <strong>核心价值：</strong>完全消除分批建仓对收益率曲线的扭曲。本FOF分4笔建仓（100万→300万→400万→500万），简单收益率在每次新增投入时会出现阶梯式跳变，TWR消除这一影响，如实反映投资管理能力。<br>
+        <strong>计算方法：</strong>在每个日期点，若累计投入发生变化（有新资金进入），则用 <code>(当日市值 - 新增现金流) / 前日市值 - 1</code> 计算子区间收益率；若无资金变动，则直接用 <code>当日市值 / 前日市值 - 1</code>。所有子区间收益率连乘得到累计TWR。
+        <div class="m-formula">子区间收益率 rᵢ = (NVᵢ - CFᵢ) / NVᵢ₋₁ - 1　|　TWR = ∏(1 + rᵢ) - 1</div>
+        <strong>解读：</strong>TWR ≥ 0 表示投资组合在扣除资金进出影响后获得正收益。TWR越高，说明基金经理的择时选股能力越强。与简单收益率对比可看出资金进出节奏对整体收益的影响程度。
+        <div class="m-note">注：本系统TWR基于费后净值计算，已扣除业绩报酬预扣。图表1中绿色实线为TWR，虚线为简单收益率（未调整资金时点），淡虚线为费前收益率。</div>
+      </div>
+    </div>
+
+    <div class="metric-card xirr">
+      <div class="m-title">XIRR 年化内部收益率 <span class="m-tag">关键指标</span></div>
+      <div class="m-desc">
+        <strong>定义：</strong>Extended Internal Rate of Return，考虑每笔现金流的时间价值，通过Newton-Raphson迭代法求解使所有现金流净现值(NPV)为零的折现率，并年化处理。<br>
+        <strong>核心价值：</strong>同时考虑了「投入金额大小」和「资金占用时间长短」，是衡量资金使用效率的金标准。对比TWR（只看管理能力不看资金节奏），XIRR反映的是投资者实际拿到的年化回报。<br>
+        <strong>计算方法：</strong>每笔申购为负现金流（资金流出），期末费后总市值为正现金流（资金回流），求解折现率r使NPV=0。
+        <div class="m-formula">NPV = Σ CFᵢ / (1 + r)^((dateᵢ - date₀) / 365.25) = 0　→　用Newton法迭代求r</div>
+        <strong>解读：</strong>XIRR > 0 表示投资整体盈利。XIRR可直接与银行理财、基金产品年化收益率横向比较。本FOF的XIRR反映的是考虑了4笔分批建仓时间差异后的真实年化回报。
+        <div class="m-note">注：XIRR使用每笔子基金的实际申购日期和金额构建现金流，期末市值为最新一期费后总市值。迭代精度1e-7，最大100次迭代。</div>
+      </div>
+    </div>
+
+    <div class="metric-card moic">
+      <div class="m-title">MOIC 投资倍数 <span class="m-tag">关键指标</span></div>
+      <div class="m-desc">
+        <strong>定义：</strong>Multiple on Invested Capital，当前费后总市值 ÷ 累计投入金额，衡量投入资本的增值倍数。<br>
+        <strong>核心价值：</strong>最直观的投资回报度量——投入1块钱变成了几块钱。不考虑时间因素，纯粹看资本增值结果。<br>
+        <strong>计算方法：</strong>
+        <div class="m-formula">MOIC = 费后总市值 / 累计投入</div>
+        <strong>解读：</strong>MOIC = 1.0 表示盈亏平衡；MOIC = 1.5 表示投入翻1.5倍（赚50%）；MOIC = 2.0 表示翻倍。与XIRR互补使用：MOIC看「赚了多少倍」，XIRR看「以什么效率赚到的」。例如同样1.5倍MOIC，1年达到和3年达到的XIRR完全不同。
+        <div class="m-note">注：MOIC基于费后净值计算，已扣除高水位法预提的业绩报酬。</div>
+      </div>
+    </div>
+
+    <div class="metric-card" style="border-left-color:#7986cb;">
+      <div class="m-title">简单收益率 <span class="m-tag" style="background:rgba(121,134,203,0.2);color:#7986cb;">参考指标</span></div>
+      <div class="m-desc">
+        <strong>定义：</strong>当前费后总市值 ÷ 累计投入 - 1，未对资金进出时点做任何调整。<br>
+        <strong>局限：</strong>分批建仓时，新增资金会立即改变分母（累计投入），导致收益率曲线出现阶梯式跳变。例如本FOF在第41个日期点（2025-08-27）新增200万投入时，收益率从约32%骤降到约20%，这不是亏损，而是分母增大导致的数学效应。<br>
+        <strong>保留原因：</strong>作为未经调整的原始数据参考，与TWR对比可直观看出资金进出对收益率的影响幅度。卡片中标注"未调整资金时点"。
+        <div class="m-note">注：图表1中虚线为简单收益率，仅作参考。主要分析依据应以TWR为准。</div>
+      </div>
+    </div>
+
+    <div class="metric-card" style="border-left-color:#ef5350;">
+      <div class="m-title">指标对比与选择指南 <span class="m-tag" style="background:rgba(239,83,80,0.2);color:#ef5350;">总结</span></div>
+      <div class="m-desc">
+        <strong>为什么需要多种指标？</strong>没有单一指标能完美衡量投资表现，不同指标反映不同维度：
+        <div class="m-formula" style="line-height:1.8;">
+          TWR　→ 评估基金经理管理能力（剥离资金进出影响）<br>
+          XIRR → 评估投资者实际年化回报（考虑资金时间价值）<br>
+          MOIC → 评估资本增值绝对倍数（最直观的盈亏度量）<br>
+          简单收益率 → 原始参考（未调整，展示资金进出影响）
+        </div>
+        <strong>本FOF建议阅读顺序：</strong>①先看MOIC了解整体盈亏倍数 → ②看XIRR了解年化效率 → ③看TWR曲线了解管理能力趋势 → ④对比简单收益率理解资金节奏影响。
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="charts">
   <div class="chart-box full">
     <div class="chart-title">母基金收益率（TWR时间加权 vs 简单收益率）</div>
@@ -781,6 +871,12 @@ function resetToInitial() {
 }
 
 // ===== Toast =====
+function toggleInfoPanel() {
+  const body = document.getElementById('infoBody');
+  const toggle = document.getElementById('infoToggle');
+  body.classList.toggle('open');
+  toggle.classList.toggle('open');
+}
 function showToast(msg, type) {
   const t = document.getElementById('toast');
   t.textContent = msg;
