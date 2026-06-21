@@ -176,14 +176,27 @@ function calcMotherFund(products) {
   products.forEach(p => p.data.forEach(d => allDates.add(d.date)));
   allDates = Array.from(allDates).sort();
   
+  // Track last known values for each product (carry forward)
+  let lastKnown = products.map(() => null);
+  
   let results = [];
   for (let date of allDates) {
     let tg = 0, tn = 0, ti = 0;
-    for (let p of products) {
-      if (p.purchase_date <= date) ti += p.amount;
-      let d = p.data.find(x => x.date === date);
-      if (d) { tg += d.gross_value; tn += d.net_value; }
-    }
+    products.forEach((p, idx) => {
+      if (p.purchase_date <= date) {
+        ti += p.amount;
+        let d = p.data.find(x => x.date === date);
+        if (d) {
+          lastKnown[idx] = d;
+          tg += d.gross_value;
+          tn += d.net_value;
+        } else if (lastKnown[idx]) {
+          // Carry forward last known value for missing dates
+          tg += lastKnown[idx].gross_value;
+          tn += lastKnown[idx].net_value;
+        }
+      }
+    });
     results.push({
       date: date,
       gross_value: parseFloat(tg.toFixed(2)),
